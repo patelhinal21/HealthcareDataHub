@@ -1,0 +1,25 @@
+{
+  "name": "info-7255-demo-1",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@elastic/elasticsearch": "^8.10.0",
+    "ajv": "^6.12.6",
+    "amqplib": "^0.10.3",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1",
+    "elasticsearch": "^16.7.3",
+    "etag": "^1.8.1",
+    "express": "^4.18.2",
+    "joi": "^17.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "nodemon": "^3.0.1",
+    "redis": "^3.1.2"
+  }
+}
