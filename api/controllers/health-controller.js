@@ -1,8 +1,10 @@
 const validate = require('../models/schema.js');
 const express = require('express');
 const redis = require('redis');
-const crypto = require('crypto');
 const etag = require('etag');
+const dotenv = require('dotenv');
+
+
 const { OAuth2Client } = require('google-auth-library');
 
 const client = redis.createClient();
@@ -25,7 +27,7 @@ async function verifyToken(req, res, next) {
     const token = authHeader.split(' ')[1];
     const ticket = await googleClient.verifyIdToken({
       idToken: token,
-      audience: '668247820934-ngvpb74cqcsdt54b7dki5eiqehj7juuc.apps.googleusercontent.com',
+      audience: process.env.GOOGLE_CLIENT_ID,
     });
     const payload = ticket.getPayload();
     req.user = payload;
@@ -37,14 +39,11 @@ async function verifyToken(req, res, next) {
 
 
 function generateETag(data) {
-
   if (typeof data !== 'string') {
     data = JSON.stringify(data);
   }
 
-  const hash = crypto.createHash('md5').update(data).digest('hex');
-
-  return `"${hash}"`;
+  return etag(data);
 }
 
 const getPlanById = async (req, res) => {
@@ -179,6 +178,7 @@ const patchPlan = async (req, res) => {
   const updates = req.body;
 
   try {
+    const clientETag = req.header('If-Match');
     const dataString = await new Promise((resolve, reject) => {
       client.get(id, (err, data) => {
         if (err) reject(err);
@@ -186,37 +186,49 @@ const patchPlan = async (req, res) => {
       });
     });
 
-    if (dataString) {
-      const existingData = JSON.parse(dataString);
-      // Merge the updates into existingData as per your schema's logic
-      const updatedData = { ...existingData, ...updates };
-
-      // Validate the merged data if necessary
-      const valid = validate(updatedData);
-      if (!valid) {
-        return res.status(400).json({ errors: validate.errors });
-      }
-
-      const updatedDataString = JSON.stringify(updatedData);
-      await new Promise((resolve, reject) => {
-        client.set(id, updatedDataString, (err) => {
-          if (err) reject(err);
-          resolve();
-        });
-      });
-
-      const newETag = generateETag(updatedDataString);
-      res.setHeader('ETag', newETag);
-      res.status(200).json(updatedData);
-    } else {
-      res.status(404).json({ message: 'Data not found' });
+    if (!dataString) {
+      return res.status(404).json({ message: 'Data not found' });
     }
+
+    const existingData = JSON.parse(dataString);
+    const existingETag = generateETag(dataString);
+
+    if (clientETag !== existingETag) {
+      return res.status(412).json({ message: 'Precondition Failed: ETag does not match' });
+    }
+
+    // Merge the updates into existingData
+    if (updates.linkedPlanServices) {
+      existingData.linkedPlanServices = [
+        ...existingData.linkedPlanServices,
+        ...updates.linkedPlanServices
+      ];
+    }
+
+    const valid = validate(existingData);
+    if (!valid) {
+      return res.status(400).json({ errors: validate.errors });
+    }
+
+    const updatedDataString = JSON.stringify(existingData);
+    await new Promise((resolve, reject) => {
+      client.set(id, updatedDataString, (err) => {
+        if (err) reject(err);
+        resolve();
+      });
+    });
+
+    const newETag = generateETag(updatedDataString);
+    res.setHeader('ETag', newETag);
+    res.status(200).json(existingData);
   } catch (error) {
     console.error('Error applying patch:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };
 
-module.exports = { verifyToken, getAllPlans, getPlanById, storeData, deleteStore, updatePlan, patchPlan, };
+
+
+module.exports = { verifyToken, getAllPlans, getPlanById, storeData, deleteStore, updatePlan, patchPlan};
 
 
