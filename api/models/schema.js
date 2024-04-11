@@ -67,6 +67,8 @@ const schema = {
   "additionalProperties": false
 };
 
+
+
 const validate = ajv.compile(schema);
 
 module.exports = validate;

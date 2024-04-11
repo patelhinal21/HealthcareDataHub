@@ -43,3 +43,5 @@ const schema = {
   },
   "required": ["linkedPlanServices", "_org", "objectId"]
 };
+
+module.exports = schema;

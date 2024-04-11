@@ -16,6 +16,5 @@ router.get('/allplans', verifyToken, healthPlanController.getAllPlans);
 router.get('/:id', verifyToken, healthPlanController.getPlanById);
 router.post('/store', verifyToken, healthPlanController.storeData);
 router.delete('/:id', verifyToken, healthPlanController.deleteStore);
-router.put('/:id', verifyToken, healthPlanController.updatePlan); 
 router.patch('/:id', verifyToken, healthPlanController.patchPlan); 
 module.exports = router;

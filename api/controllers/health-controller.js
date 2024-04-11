@@ -1,8 +1,10 @@
 const validate = require('../models/schema.js');
-const express = require('express');
+const schema = require('../models/patch.Schema.js');
 const redis = require('redis');
 const etag = require('etag');
-const dotenv = require('dotenv');
+const Ajv = require('ajv');
+const ajv = new Ajv();
+
 
 
 const { OAuth2Client } = require('google-auth-library');
@@ -86,6 +88,80 @@ const getAllPlans = async (req, res) => {
   }
 };
 
+// const storeData = async (req, res) => {
+//   const valid = validate(req.body);
+//   if (!valid) {
+//     return res.status(400).json({
+//       errors: validate.errors
+//     });
+//   }
+//   try {
+//     const data = req.body;
+//     const etag = generateETag(JSON.stringify(data));
+//     const dataString = JSON.stringify(data);
+//     client.set(data.objectId, dataString, (storeErr) => {
+//       if (storeErr) {
+//         console.error(storeErr);
+//         return res.status(500).json({ error: 'Internal Server Error' });
+//       }
+//       res.setHeader('ETag', etag);
+//       return res.status(201).json({ message: 'Data stored successfully' });
+//     });
+//   } catch (error) {
+//     console.error(error);
+//     return res.status(500).json({ error: 'Internal Server Error' });
+//   }
+// }
+// function flattenAndStore(data, parentId = null) {
+//   const entries = [];
+
+//   function traverse(obj) {
+//       if (typeof obj === 'object' && obj !== null) {
+//           for (const key in obj) {
+//               if (obj.hasOwnProperty(key)) {
+//                   const value = obj[key];
+//                   if (key === 'objectId') {
+//                       const id = value;
+//                       const entry = JSON.stringify(obj);
+//                       entries.push({ id, entry });
+//                   }
+//                   traverse(value);
+//               }
+//           }
+//       }
+//   }
+
+//   traverse(data);
+//   return entries;
+// }
+
+function flattenAndStore(data, parentId = null) {
+  const entries = [];
+
+  function traverse(obj, parentKey = '') {
+    if (typeof obj === 'object' && obj !== null) {
+      for (const key in obj) {
+        if (obj.hasOwnProperty(key)) {
+          const value = obj[key];
+          // Check if the object has both objectType and objectId
+          if (key === 'objectId' && obj.objectType) {
+            // Construct the id using objectType and objectId
+            const id = `${obj.objectType}:${value}`;
+            const entry = JSON.stringify(obj);
+            entries.push({ id, entry });
+          } else {
+            // Traverse further if not the target object
+            traverse(value, key);
+          }
+        }
+      }
+    }
+  }
+
+  traverse(data);
+  return entries;
+}
+
 const storeData = async (req, res) => {
   const valid = validate(req.body);
   if (!valid) {
@@ -96,15 +172,21 @@ const storeData = async (req, res) => {
   try {
     const data = req.body;
     const etag = generateETag(JSON.stringify(data));
-    const dataString = JSON.stringify(data);
-    client.set(data.objectId, dataString, (storeErr) => {
-      if (storeErr) {
-        console.error(storeErr);
-        return res.status(500).json({ error: 'Internal Server Error' });
-      }
-      res.setHeader('ETag', etag);
-      return res.status(201).json({ message: 'Data stored successfully' });
+
+    // Flatten the JSON and store in Redis
+    const entries = flattenAndStore(data);
+    entries.forEach(({ id, entry }) => {
+      client.set(id, entry, (storeErr) => {
+        if (storeErr) {
+          console.error(storeErr);
+          return res.status(500).json({ error: 'Internal Server Error' });
+        }
+        console.log(`Stored object with objectId ${id} in Redis`);
+      });
     });
+
+    res.setHeader('ETag', etag);
+    return res.status(201).json({ message: 'Data stored successfully' });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Internal Server Error' });
@@ -135,43 +217,64 @@ const deleteStore = async (req, res) => {
   }
 };
 
-const updatePlan = async (req, res) => {
-  const valid = validate(req.body);
-  if (!valid) {
-    return res.status(400).json({ errors: validate.errors });
-  }
+// const patchPlan = async (req, res) => {
+//   const id = req.params.id;
+//   const updates = req.body;
 
-  const id = req.params.id;
-  const newData = req.body;
-  const newDataString = JSON.stringify(newData);
+//   try {
+//     const clientETag = req.header('If-Match');
+//     const dataString = await new Promise((resolve, reject) => {
+//       client.get(id, (err, data) => {
+//         if (err) reject(err);
+//         resolve(data);
+//       });
+//     });
 
-  try {
-    const dataExists = await new Promise((resolve, reject) => {
-      client.exists(id, (err, exists) => {
-        if (err) reject(err);
-        resolve(exists);
-      });
-    });
+//     if (!dataString) {
+//       return res.status(404).json({ message: 'Data not found' });
+//     }
 
-    if (dataExists) {
-      await new Promise((resolve, reject) => {
-        client.set(id, newDataString, (err) => {
-          if (err) reject(err);
-          resolve();
-        });
-      });
+//     const existingData = JSON.parse(dataString);
+//     const existingETag = generateETag(dataString);
 
-      const newETag = generateETag(newDataString);
-      res.setHeader('ETag', newETag);
-      res.status(200).json({ message: 'Data updated successfully' });
-    } else {
-      res.status(404).json({ message: 'Data not found' });
-    }
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
-};
+//     if (clientETag !== existingETag) {
+//       return res.status(412).json({ message: 'Precondition Failed: ETag does not match' });
+//     }
+
+//     // Merge the updates into existingData
+//     if (updates.linkedPlanServices) {
+//       existingData.linkedPlanServices = [
+//         ...existingData.linkedPlanServices,
+//         ...updates.linkedPlanServices
+//       ];
+//     }
+
+//     // Validate the merged data using the schema
+//     const valid = validate(existingData);
+//     if (!valid) {
+//       return res.status(400).json({ errors: validate.errors });
+//     }
+
+//     // Flatten and store the updated data in Redis
+//     const entries = flattenAndStore(existingData);
+//     await Promise.all(entries.map(({ id, entry }) => {
+//       return new Promise((resolve, reject) => {
+//         client.set(id, entry, (err) => {
+//           if (err) reject(err);
+//           resolve();
+//         });
+//       });
+//     }));
+
+//     const updatedDataString = JSON.stringify(existingData);
+//     const newETag = generateETag(updatedDataString);
+//     res.setHeader('ETag', newETag);
+//     res.status(200).json(existingData);
+//   } catch (error) {
+//     console.error('Error applying patch:', error);
+//     res.status(500).json({ error: 'Internal Server Error' });
+//   }
+// };
 
 const patchPlan = async (req, res) => {
   const id = req.params.id;
@@ -179,8 +282,10 @@ const patchPlan = async (req, res) => {
 
   try {
     const clientETag = req.header('If-Match');
+
+    // Retrieve the data using the prefixed key
     const dataString = await new Promise((resolve, reject) => {
-      client.get(id, (err, data) => {
+      client.get(`plan:${id}`, (err, data) => {  // Assuming the prefix is "plan:" for this example
         if (err) reject(err);
         resolve(data);
       });
@@ -191,6 +296,12 @@ const patchPlan = async (req, res) => {
     }
 
     const existingData = JSON.parse(dataString);
+
+    // Ensure existingData has an objectType property
+    if (!existingData.objectType) {
+      return res.status(400).json({ error: 'Existing data does not have an objectType property' });
+    }
+
     const existingETag = generateETag(dataString);
 
     if (clientETag !== existingETag) {
@@ -205,19 +316,25 @@ const patchPlan = async (req, res) => {
       ];
     }
 
+    // Validate the merged data using the updated schema
+    const validate = ajv.compile(schema);
     const valid = validate(existingData);
     if (!valid) {
       return res.status(400).json({ errors: validate.errors });
     }
 
-    const updatedDataString = JSON.stringify(existingData);
-    await new Promise((resolve, reject) => {
-      client.set(id, updatedDataString, (err) => {
-        if (err) reject(err);
-        resolve();
+    // Flatten and store the updated data in Redis
+    const entries = flattenAndStore(existingData);
+    await Promise.all(entries.map(({ id, entry }) => {
+      return new Promise((resolve, reject) => {
+        client.set(id, entry, (err) => {
+          if (err) reject(err);
+          resolve();
+        });
       });
-    });
+    }));
 
+    const updatedDataString = JSON.stringify(existingData);
     const newETag = generateETag(updatedDataString);
     res.setHeader('ETag', newETag);
     res.status(200).json(existingData);
@@ -229,6 +346,9 @@ const patchPlan = async (req, res) => {
 
 
 
-module.exports = { verifyToken, getAllPlans, getPlanById, storeData, deleteStore, updatePlan, patchPlan};
+
+
+
+module.exports = { verifyToken, getAllPlans, getPlanById, storeData, deleteStore, patchPlan};
 
 
