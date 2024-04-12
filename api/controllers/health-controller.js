@@ -206,8 +206,194 @@ const patchPlan = async (req, res) => {
   }
 };
 
+// const deletePlan = async (req, res) => {
+//   try {
+//     const id = req.params.id;
+
+//     const deleteResult = await new Promise((resolve, reject) => {
+//       client.del(id, (err, result) => {
+//         if (err) reject(err);
+//         resolve(result);
+//       });
+//     });
+
+
+//     if (deleteResult === 0) {
+//       return res.status(404).json({ message: "Data not found" });
+//     }
+
+
+//     res.status(204).end();
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ error: 'Internal Server Error' });
+//   }
+// };
+
+
+// const deletePlan = async (req, res) => {
+//   const objectId = req.params.id;
+
+//   async function recursiveDelete(objectId) {
+//     const keysToDelete = new Set();
+
+//     function traverse(obj) {
+//       if (Array.isArray(obj)) {
+//         obj.forEach(item => traverse(item));
+//       } else if (typeof obj === 'object' && obj !== null) {
+//         for (const key in obj) {
+//           if (obj.hasOwnProperty(key)) {
+//             const value = obj[key];
+//             // Check and collect if it has a standard objectType:objectId pattern
+//             if (typeof value === 'object' && value !== null && value.objectType && value.objectId) {
+//               const id = `${value.objectType}:${value.objectId}`;
+//               keysToDelete.add(id);
+//               console.log('Key for deletion:', id);
+//             }
+//             // Continue to traverse to catch all nested structures
+//             traverse(value);
+//           }
+//         }
+//       } else if (typeof obj === 'string') {
+//         // Try to match strings that could represent Redis keys
+//         const possibleKeyPattern = /^(\w+):([\w-]+)$/; // Adjust the pattern to match your keys
+//         const match = obj.match(possibleKeyPattern);
+//         if (match) {
+//           keysToDelete.add(obj); // Add the entire string if it matches a Redis key pattern
+//           console.log('Key for deletion:', obj);
+//         }
+//       }
+//     }
+
+//     const mainObjectKey = `plan:${objectId}`;
+//     console.log('Main object key:', mainObjectKey);
+
+//     const mainObjectString = await new Promise((resolve, reject) => {
+//       client.get(mainObjectKey, (err, data) => {
+//         if (err) reject(err);
+//         else resolve(data);
+//       });
+//     });
+
+//     if (!mainObjectString) {
+//       return 0;
+//     }
+
+//     const mainObject = JSON.parse(mainObjectString);
+//     traverse(mainObject);
+
+//     keysToDelete.add(mainObjectKey);
+
+//     const pipeline = client.multi();
+//     keysToDelete.forEach(key => {
+//       pipeline.del(key);
+//     });
+
+//     const deletionResult = await new Promise((resolve, reject) => {
+//       pipeline.exec((err, results) => {
+//         if (err) reject(err);
+//         else resolve(results);
+//       });
+//     });
+
+//     return deletionResult.filter(result => result[1] === 1).length;
+//   }
+
+//   try {
+//     const keysDeleted = await recursiveDelete(objectId);
+
+//     if (keysDeleted === 0) {
+//       return res.status(404).json({ message: "Data not found or no keys deleted" });
+//     }
+
+//     res.status(204).end();
+//   } catch (error) {
+//     console.error('Error deleting data:', error);
+//     res.status(500).json({ error: 'Internal Server Error' });
+//   }
+// };
+
 const deletePlan = async (req, res) => {
+  const objectId = req.params.id;
+
+  async function recursiveDelete(mainObjectId) {
+    const keysToDelete = new Set();
+
+    function traverse(obj) {
+      if (Array.isArray(obj)) {
+        obj.forEach(item => traverse(item));
+      } else if (typeof obj === 'object' && obj !== null) {
+        for (const key in obj) {
+          if (obj.hasOwnProperty(key)) {
+            const value = obj[key];
+            // Check for nested keys to delete
+            if (key === 'objectId' && typeof value === 'string') {
+              const derivedKey = `${obj.objectType}:${value}`;
+              keysToDelete.add(derivedKey);
+              console.log('Derived key for deletion:', derivedKey);
+            }
+            // Recursive traversal for objects and arrays
+            traverse(value);
+          }
+        }
+      }
+    }
+
+    // Fetch the main object based on its key
+    const mainObjectKey = `plan:${mainObjectId}`;
+    const mainObjectString = await new Promise((resolve, reject) => {
+      client.get(mainObjectKey, (err, data) => {
+        if (err) reject(err);
+        else resolve(data);
+      });
+    });
+
+    if (!mainObjectString) {
+      return 0; // Indicate no data found for the main key
+    }
+
+    // Parse the main object and begin traversal to collect keys
+    const mainObject = JSON.parse(mainObjectString);
+    traverse(mainObject);
+    keysToDelete.add(mainObjectKey); // Add the main object key to the set
+
+    // Use a Redis pipeline to delete all keys in the set
+    const pipeline = client.multi();
+    keysToDelete.forEach(key => pipeline.del(key));
+
+    // Execute the pipeline
+    const deletionResult = await new Promise((resolve, reject) => {
+      pipeline.exec((err, results) => {
+        if (err) reject(err);
+        else resolve(results.map(r => r[1])); // We're interested in the second item of each result tuple
+      });
+    });
+
+    // Count and return the number of successful deletions
+    return deletionResult.reduce((acc, val) => acc + (val === 1 ? 1 : 0), 0);
+  }
+
+  try {
+    // Attempt to delete the main object and related keys
+    const keysDeleted = await recursiveDelete(objectId);
+
+    if (keysDeleted === 0) {
+      res.status(404).json({ message: "Data not found or no keys deleted" });
+    } else {
+      res.status(204).end();
+    }
+  } catch (error) {
+    console.error('Error during deletion:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 };
+
+module.exports = { deletePlan };
+
+
+
+
+
 module.exports = { verifyToken, getAllPlans, getPlanById, postPlan, deletePlan, patchPlan };
 
 
