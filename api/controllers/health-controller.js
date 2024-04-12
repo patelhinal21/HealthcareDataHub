@@ -41,25 +41,25 @@ function generateETag(data) {
   return etag(data);
 }
 
-const getPlanById = async (req, res) => {
-  try {
-    const clientEtag = req.header('If-None-Match');
-    client.get(req.params.id, (error, data) => {
-      if (error) return res.status(500).json({ error: 'Internal Server Error' });
-      if (!data) return res.status(404).json({ error: 'Data not found' });
+// const getPlanById = async (req, res) => {
+//   try {
+//     const clientEtag = req.header('If-None-Match');
+//     client.get(req.params.id, (error, data) => {
+//       if (error) return res.status(500).json({ error: 'Internal Server Error' });
+//       if (!data) return res.status(404).json({ error: 'Data not found' });
 
-      const retrievedEtag = generateETag(data);
-      if (clientEtag && clientEtag === retrievedEtag) {
-        res.status(304).json({ message: 'Data not modified' });
-      } else {
-        res.setHeader('ETag', retrievedEtag);
-        res.status(200).json(JSON.parse(data));
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
-};
+//       const retrievedEtag = generateETag(data);
+//       if (clientEtag && clientEtag === retrievedEtag) {
+//         res.status(304).json({ message: 'Data not modified' });
+//       } else {
+//         res.setHeader('ETag', retrievedEtag);
+//         res.status(200).json(JSON.parse(data));
+//       }
+//     });
+//   } catch (error) {
+//     res.status(500).json({ error: 'Internal Server Error' });
+//   }
+// };
 
 const getAllPlans = async (req, res) => {
   try {
@@ -79,6 +79,46 @@ const getAllPlans = async (req, res) => {
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };
+
+const getPlanById = async (req, res) => {
+  try {
+    const objectId = req.params.id;
+    const clientEtag = req.header('If-None-Match');
+    let dataString = null;
+    const possibleObjectTypes = ['service', 'membercostshare', 'planservice', 'plan'];
+
+    for (const objectType of possibleObjectTypes) {
+      const key = `${objectType}:${objectId}`;
+      dataString = await new Promise((resolve, reject) => {
+        client.get(key, (err, data) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(data);
+          }
+        });
+      });
+
+      if (dataString) break;  // Data found, break the loop
+    }
+
+    if (dataString) {
+      const retrievedEtag = generateETag(dataString);
+      if (clientEtag && clientEtag === retrievedEtag) {
+        res.status(304).json({ message: 'Not Modified' });
+      } else {
+        res.setHeader('ETag', retrievedEtag);
+        res.status(200).json(JSON.parse(dataString));
+      }
+    } else {
+      res.status(404).json({ message: 'Data not found' });
+    }
+  } catch (error) {
+    console.error('Error retrieving data:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
 
 function flattenAndStore(data, parentId = null) {
   const entries = [];
@@ -207,6 +247,81 @@ const patchPlan = async (req, res) => {
 };
 
 
+// const deletePlan = async (req, res) => {
+//   const objectId = req.params.id;
+
+//   async function recursiveDelete(mainObjectId) {
+//     const keysToDelete = new Set();
+
+//     function traverse(obj) {
+//       if (Array.isArray(obj)) {
+//         obj.forEach(item => traverse(item));
+//       } else if (typeof obj === 'object' && obj !== null) {
+//         for (const key in obj) {
+//           if (obj.hasOwnProperty(key)) {
+//             const value = obj[key];
+//             // Check for nested keys to delete
+//             if (key === 'objectId' && typeof value === 'string') {
+//               const derivedKey = `${obj.objectType}:${value}`;
+//               keysToDelete.add(derivedKey);
+//               console.log('Derived key for deletion:', derivedKey);
+//             }
+//             // Recursive traversal for objects and arrays
+//             traverse(value);
+//           }
+//         }
+//       }
+//     }
+
+//     // Fetch the main object based on its key
+//     const mainObjectKey = `plan:${mainObjectId}`;
+//     const mainObjectString = await new Promise((resolve, reject) => {
+//       client.get(mainObjectKey, (err, data) => {
+//         if (err) reject(err);
+//         else resolve(data);
+//       });
+//     });
+
+//     if (!mainObjectString) {
+//       return 0; // Indicate no data found for the main key
+//     }
+
+//     // Parse the main object and begin traversal to collect keys
+//     const mainObject = JSON.parse(mainObjectString);
+//     traverse(mainObject);
+//     keysToDelete.add(mainObjectKey); // Add the main object key to the set
+
+//     // Use a Redis pipeline to delete all keys in the set
+//     const pipeline = client.multi();
+//     keysToDelete.forEach(key => pipeline.del(key));
+
+//     // Execute the pipeline
+//     const deletionResult = await new Promise((resolve, reject) => {
+//       pipeline.exec((err, results) => {
+//         if (err) reject(err);
+//         else resolve(results.map(r => r[1])); // We're interested in the second item of each result tuple
+//       });
+//     });
+
+//     // Count and return the number of successful deletions
+//     return deletionResult.reduce((acc, val) => acc + (val === 1 ? 1 : 0), 0);
+//   }
+
+//   try {
+//     // Attempt to delete the main object and related keys
+//     const keysDeleted = await recursiveDelete(objectId);
+
+//     if (keysDeleted === 0) {
+//       res.status(404).json({ message: "Data not found or no keys deleted" });
+//     } else {
+//       res.status(204).end();
+//     }
+//   } catch (error) {
+//     console.error('Error during deletion:', error);
+//     res.status(500).json({ error: 'Internal Server Error' });
+//   }
+// };
+
 const deletePlan = async (req, res) => {
   const objectId = req.params.id;
 
@@ -216,75 +331,77 @@ const deletePlan = async (req, res) => {
     function traverse(obj) {
       if (Array.isArray(obj)) {
         obj.forEach(item => traverse(item));
-      } else if (typeof obj === 'object' && obj !== null) {
-        for (const key in obj) {
-          if (obj.hasOwnProperty(key)) {
-            const value = obj[key];
-            // Check for nested keys to delete
-            if (key === 'objectId' && typeof value === 'string') {
-              const derivedKey = `${obj.objectType}:${value}`;
-              keysToDelete.add(derivedKey);
-              console.log('Derived key for deletion:', derivedKey);
-            }
-            // Recursive traversal for objects and arrays
-            traverse(value);
+      } else if (obj && typeof obj === 'object') {
+        Object.entries(obj).forEach(([key, value]) => {
+          if (key === 'objectId' && typeof value === 'string' && obj.objectType) {
+            keysToDelete.add(`${obj.objectType}:${value}`);
           }
-        }
+          traverse(value);
+        });
       }
     }
 
-    // Fetch the main object based on its key
     const mainObjectKey = `plan:${mainObjectId}`;
     const mainObjectString = await new Promise((resolve, reject) => {
       client.get(mainObjectKey, (err, data) => {
-        if (err) reject(err);
-        else resolve(data);
+        if (err) return reject(err);
+        resolve(data);
       });
     });
 
     if (!mainObjectString) {
-      return 0; // Indicate no data found for the main key
+      return null; // No data found for the main key
     }
 
-    // Parse the main object and begin traversal to collect keys
     const mainObject = JSON.parse(mainObjectString);
     traverse(mainObject);
     keysToDelete.add(mainObjectKey); // Add the main object key to the set
 
-    // Use a Redis pipeline to delete all keys in the set
+    if (keysToDelete.size === 0) {
+      return null;
+    }
+
     const pipeline = client.multi();
     keysToDelete.forEach(key => pipeline.del(key));
 
-    // Execute the pipeline
-    const deletionResult = await new Promise((resolve, reject) => {
+    const deletionResults = await new Promise((resolve, reject) => {
       pipeline.exec((err, results) => {
-        if (err) reject(err);
-        else resolve(results.map(r => r[1])); // We're interested in the second item of each result tuple
+        if (err) return reject(err);
+        // Ensure each result is an array; wrap it if it's not.
+        resolve(results.map(result => Array.isArray(result) ? result : [null, result]));
       });
     });
 
-    // Count and return the number of successful deletions
-    return deletionResult.reduce((acc, val) => acc + (val === 1 ? 1 : 0), 0);
+    // Return the deletion results processed to ensure they are in [error, result] format
+    return deletionResults;
   }
 
   try {
-    // Attempt to delete the main object and related keys
-    const keysDeleted = await recursiveDelete(objectId);
+    const deletionResults = await recursiveDelete(objectId);
 
-    if (keysDeleted === 0) {
+    if (!deletionResults) {
       res.status(404).json({ message: "Data not found or no keys deleted" });
     } else {
-      res.status(204).end();
+      const keysDeletedCount = deletionResults.reduce((acc, result) => {
+        const [error, deleteCount] = result;
+        if (error) {
+          console.error('Error in pipeline exec for key deletion:', error);
+          return acc;
+        }
+        return acc + (deleteCount === 1 ? 1 : 0);
+      }, 0);
+      
+      if (keysDeletedCount === 0) {
+        res.status(404).json({ message: "No keys were deleted" });
+      } else {
+        res.status(204).end();
+      }
     }
   } catch (error) {
     console.error('Error during deletion:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };
-
-module.exports = { deletePlan };
-
-
 
 
 
