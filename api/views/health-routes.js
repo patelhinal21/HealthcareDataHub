@@ -14,7 +14,7 @@ const healthPlanController = require('../controllers/health-controller.js');
 
 router.get('/allplans', verifyToken, healthPlanController.getAllPlans);
 router.get('/:id', verifyToken, healthPlanController.getPlanById);
-router.post('/store', verifyToken, healthPlanController.storeData);
-router.delete('/:id', verifyToken, healthPlanController.deleteStore);
+router.post('/store', verifyToken, healthPlanController.postPlan);
+router.delete('/:id', verifyToken, healthPlanController.deletePlan);
 router.patch('/:id', verifyToken, healthPlanController.patchPlan); 
 module.exports = router;
