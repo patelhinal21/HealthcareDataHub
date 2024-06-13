@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "employee": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "age": {
+          "type": "integer"
+        },
+        "married": {
+          "type": "boolean"
+        }
+      },
+      "required": ["name", "age", "married"]
+    }
+  },
+  "required": ["employee"]
+}
